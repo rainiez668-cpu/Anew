@@ -1,0 +1,14 @@
+.git
+.github
+.next
+node_modules
+.env
+.env.local
+.env.*.local
+.vercel
+.claude
+.codex-dev-err
+.codex-dev-out
+tsconfig.tsbuildinfo
+coverage
+*.log
