@@ -260,6 +260,15 @@ export function isLocale(value: unknown): value is Locale {
   return typeof value === "string" && LOCALES.includes(value as Locale);
 }
 
+export function resolveLocale(
+  savedLocale: unknown,
+  deploymentLocale: unknown = process.env.NEXT_PUBLIC_DEFAULT_LOCALE,
+): Locale {
+  if (isLocale(savedLocale)) return savedLocale;
+  if (isLocale(deploymentLocale)) return deploymentLocale;
+  return "en";
+}
+
 export const reviewPrompts: Record<Locale, readonly string[]> = {
   en: ["One thing I did today", "One thing that helped", "One small win", "What got in the way", "Tomorrow I want to"],
   "zh-CN": ["今天我做的一件事", "今天对我有帮助的事", "今天的一个小收获", "什么阻碍了我？", "明天我想要"],

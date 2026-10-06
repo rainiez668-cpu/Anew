@@ -10,7 +10,7 @@ import packageInfo from "@/package.json";
 import { useSpeechRecognition } from "../hooks/use-speech-recognition";
 import {
   dictionaries,
-  isLocale,
+  resolveLocale,
   reviewPrompts,
   taskTypeLabel,
   themeMeta,
@@ -118,7 +118,7 @@ const todayKey = () => {
 const defaultPersisted = (): Persisted => ({
   day: todayKey(),
   theme: "Daybreak",
-  locale: "en",
+  locale: resolveLocale(undefined),
   candidates: SEED_CANDIDATES,
   swiped: 0,
   basicsDone: {},
@@ -296,7 +296,7 @@ export default function LoopApp() {
             parsed.theme && THEME_NAMES.includes(parsed.theme)
               ? parsed.theme
               : defaultPersisted().theme,
-          locale: isLocale(parsed.locale) ? parsed.locale : "en",
+          locale: resolveLocale(parsed.locale),
           candidates,
           msgs: migrateMsgs(parsed.msgs),
           basics,
