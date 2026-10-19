@@ -64,6 +64,7 @@ const en = {
   nowBuilding: "Now focusing",
   switchTask: "Switch",
   smallSteps: "Small steps",
+  defaultTaskStep: "Just do the thing",
   stillOnThis: "Still on this?",
   noRush: "No rush - continue or switch.",
   stillOnIt: "Still on it",
@@ -75,6 +76,7 @@ const en = {
   pause: "Pause",
   resume: "Resume",
   stopTimer: "Stop timer",
+  minutes: "min",
   loopClosed: "Loop closed.",
   seeTomorrow: "see you tomorrow morning",
   oneLoopCloser: "One loop closer.",
@@ -123,6 +125,8 @@ const en = {
   selfHostAi: "Self-hosted: your server-side API key",
   cloudPlanned: "Anew Cloud: planned, not available",
   voicePrivacy: "Voice input uses your browser's speech service and may process audio online.",
+  storageUnavailable:
+    "Data could not be saved to this browser. Changes may be lost when you close the page; check available storage.",
 } as const;
 
 type Dictionary = {
@@ -191,6 +195,7 @@ const zhCN: Dictionary = {
   nowBuilding: "正在进行",
   switchTask: "切换",
   smallSteps: "小步骤",
+  defaultTaskStep: "先做起来就好",
   stillOnThis: "还在做这件事吗？",
   noRush: "不用着急，可以继续或切换。",
   stillOnIt: "继续进行",
@@ -202,6 +207,7 @@ const zhCN: Dictionary = {
   pause: "暂停",
   resume: "继续",
   stopTimer: "停止计时",
+  minutes: "分钟",
   loopClosed: "今日循环已完成。",
   seeTomorrow: "明早见",
   oneLoopCloser: "又完成了一个循环",
@@ -249,11 +255,36 @@ const zhCN: Dictionary = {
   selfHostAi: "自行部署：使用你的服务器端 API Key",
   cloudPlanned: "Anew Cloud：规划中，尚未开放",
   voicePrivacy: "语音输入使用浏览器提供的识别服务，音频可能会在线处理。",
+  storageUnavailable: "数据暂时无法保存到浏览器。关闭页面后当前修改可能丢失，建议检查浏览器存储空间。",
 };
 
 export const dictionaries: Record<Locale, Dictionary> = {
   en,
   "zh-CN": zhCN,
+};
+
+export function formatMinutes(locale: Locale, minutes: number): string {
+  return `${minutes} ${dictionaries[locale].minutes}`;
+}
+
+export const presetTaskCopy: Record<string, { title: string; reason: string; steps: string[] }> = {
+  c1: { title: "完成今天最重要的一件事", reason: "先从一件小事开始", steps: ["写下最重要的事", "整理出一点空间", "迈出一小步"] },
+  c2: { title: "处理一件拖了很久的小事", reason: "解决一个小循环", steps: ["选最小的一件事进行", "现在就处理"] },
+  c3: { title: "回复消息", reason: "清理待办", steps: ["只处理最上面两条"] },
+  c4: { title: "写下简短的每日复盘", reason: "为明天的计划提供参考", steps: ["打开复盘页面", "每个问题写一句话"] },
+  c5: { title: "散步或慢跑一会儿", reason: "让身体和注意力重新启动", steps: ["穿上鞋", "走出门"] },
+  c6: { title: "读一点书或学点新东西", reason: "保持思考但不给自己太大压力", steps: ["选一页内容", "读完它", "记下一个想法"] },
+  c7: { title: "用三句话计划明天", reason: "让明天更容易开始", steps: ["一件大事", "两件小事"] },
+  c8: { title: "喝水并伸展一下", reason: "恢复一点精力", steps: ["倒一杯水", "伸展两分钟"] },
+  c9: { title: "花十分钟整理一小块地方", reason: "空间清爽，心情轻松", steps: ["设定十分钟", "只整理桌面"] },
+  c10: { title: "真正休息一会儿", reason: "休息也是计划的一部分", steps: ["离开屏幕", "做一件让自己舒服的事"] },
+};
+
+export const presetBasicCopy: Record<string, string> = {
+  b1: "早间服药",
+  b2: "喝水",
+  b3: "活动身体",
+  b4: "查看计划",
 };
 
 export function isLocale(value: unknown): value is Locale {

@@ -32,6 +32,7 @@ Anew is a mobile-first daily planning app for people who experience task-initiat
 - First-run onboarding that is short and skippable.
 - Improve gesture discoverability and skipped-task state feedback.
 - Clarify One Big Thing and Daily Basics labeling.
+- Adjust Quick Add default-steps logic — let users add, edit, or skip steps freely.
 - Complete empty states, transitions, and edge-case feedback.
 - Finish Simplified Chinese localization of runtime content.
 - Theme consistency and text contrast (WCAG AA targets).
@@ -41,7 +42,7 @@ Anew is a mobile-first daily planning app for people who experience task-initiat
 ## Mid-term
 
 - Configure and validate real AI model services (deployment, error handling, Chinese I/O).
-- AI-assisted task breakdown — turn large tasks into actions that can start within five minutes.
+- AI-assisted task breakdown — turn large tasks into actions that can start within five minutes; users can edit or adopt generated steps freely.
 - No-shame weekly momentum review — show what was accomplished, not streak breaks.
 - Backup / restore experience improvements.
 - Offline resilience and install experience.
@@ -59,5 +60,3 @@ Anew is a mobile-first daily planning app for people who experience task-initiat
 - Streaks, penalty systems, and completion-rate dashboards.
 - Default push notifications.
 - Calendar scheduling / time-blocking.
-
-See PRD §3.7 for the reasoning behind each non-goal.

@@ -30,6 +30,7 @@ export type TaskStatus = "candidate" | "today" | "skippedToday" | "done";
 
 export interface Task {
   id: string;
+  presetKey?: string;
   title: string;
   reason: string;
   min: number;

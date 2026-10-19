@@ -47,6 +47,11 @@ export interface LegacyExport {
 const isBrowser = typeof window !== "undefined";
 
 let migrated = false;
+let storageWriteStatus: "saved" | "unavailable" = "saved";
+
+export function getStorageWriteStatus(): "saved" | "unavailable" {
+  return storageWriteStatus;
+}
 
 /** One-time copy of legacy storage data to the current legacy-compatible keys. */
 function ensureMigrated(): void {
@@ -81,14 +86,22 @@ function read<T>(key: string, fallback: T): T {
 }
 
 /** JSON-serialize and write a key. No-op on the server or if storage is blocked/full. */
-function write<T>(key: string, value: T): void {
-  if (!isBrowser) return;
+function write<T>(key: string, value: T): boolean {
+  if (!isBrowser) return false;
   ensureMigrated();
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
+    storageWriteStatus = "saved";
+    return true;
   } catch {
     // Storage unavailable (private mode, quota exceeded) — degrade to in-memory.
+    storageWriteStatus = "unavailable";
+    return false;
   }
+}
+
+export function saveLoopState(state: unknown): boolean {
+  return write(LOOP_STORAGE_KEY, state);
 }
 
 /* ---------- Tasks ---------- */
@@ -97,8 +110,8 @@ export function getTasks(): Task[] {
   return read<Task[]>(KEYS.tasks, []);
 }
 
-export function saveTasks(tasks: Task[]): void {
-  write(KEYS.tasks, tasks);
+export function saveTasks(tasks: Task[]): boolean {
+  return write(KEYS.tasks, tasks);
 }
 
 /* ---------- Daily reviews ---------- */

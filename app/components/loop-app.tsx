@@ -10,6 +10,9 @@ import packageInfo from "@/package.json";
 import { useSpeechRecognition } from "../hooks/use-speech-recognition";
 import {
   dictionaries,
+  formatMinutes,
+  presetBasicCopy,
+  presetTaskCopy,
   resolveLocale,
   reviewPrompts,
   taskTypeLabel,
@@ -31,6 +34,7 @@ import type { Task as PlannedTask } from "@/lib/types";
 import {
   clearLegacyData,
   getDailyBasics,
+  getStorageWriteStatus,
   getReviews,
   getTasks,
   importLegacyData,
@@ -38,6 +42,7 @@ import {
   LOOP_STORAGE_KEY,
   parseLegacyExport,
   saveTasks,
+  saveLoopState,
 } from "@/lib/storage";
 import { mergeCanonicalTasks, toDisplayTask } from "@/lib/task-adapter";
 
@@ -59,7 +64,7 @@ interface Persisted {
   generated: boolean;
   // The user's own daily-basics checklist. Persisted (so it repeats every day);
   // only the per-day `basicsDone` ticks reset at rollover.
-  basics: { id: string; label: string }[];
+  basics: { id: string; label: string; presetKey?: string }[];
 }
 
 // Older saves stored msgs as a plain string[] (user lines only). Upgrade them
@@ -119,14 +124,24 @@ const defaultPersisted = (): Persisted => ({
   day: todayKey(),
   theme: "Daybreak",
   locale: resolveLocale(undefined),
-  candidates: SEED_CANDIDATES,
+  candidates: SEED_CANDIDATES.map((task) => ({ ...task, presetKey: task.id })),
   swiped: 0,
   basicsDone: {},
   stepsDone: {},
   msgs: [],
   generated: false,
-  basics: BASICS.map((b) => ({ id: b.id, label: b.label })),
+  basics: BASICS.map((b) => ({ id: b.id, label: b.label, presetKey: b.id })),
 });
+
+function localizedTask(task: Task, locale: Locale): Task {
+  if (locale !== "zh-CN" || !task.presetKey) return task;
+  const copy = presetTaskCopy[task.presetKey];
+  return copy ? { ...task, ...copy } : task;
+}
+
+function localizedBasic(basic: { label: string; presetKey?: string }, locale: Locale): string {
+  return locale === "zh-CN" && basic.presetKey ? presetBasicCopy[basic.presetKey] ?? basic.label : basic.label;
+}
 
 // New day: completed one-off tasks never reappear, skipped/today cards return
 // to the deck as candidates, and basics, the loop and the review reset. Tasks
@@ -253,8 +268,15 @@ export default function LoopApp() {
 
   const secRef = useRef(0);
   const toastT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const storageWarningShown = useRef(false);
   const celebT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const importRef = useRef<HTMLInputElement>(null);
+
+  const toast = useCallback((message: string) => {
+    clearTimeout(toastT.current);
+    setToastText(message);
+    toastT.current = setTimeout(() => setToastText(null), 1900);
+  }, []);
 
   /* ---------- persistence ---------- */
 
@@ -316,24 +338,24 @@ export default function LoopApp() {
     if (!loaded) return;
     try {
       const { candidates, ...uiState } = p;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(uiState));
-      saveTasks(mergeCanonicalTasks(candidates, getTasks()));
+      const loopSaved = saveLoopState(uiState);
+      const tasksSaved = saveTasks(mergeCanonicalTasks(candidates, getTasks()));
+      if ((!loopSaved || !tasksSaved) && getStorageWriteStatus() === "unavailable" && !storageWarningShown.current) {
+        storageWarningShown.current = true;
+        toast(dictionaries[p.locale].storageUnavailable);
+      } else if (loopSaved && tasksSaved) {
+        storageWarningShown.current = false;
+      }
     } catch {
       // storage unavailable — run in-memory
     }
-  }, [p, loaded]);
+  }, [p, loaded, toast]);
 
   useEffect(() => {
     document.documentElement.lang = p.locale;
   }, [p.locale]);
 
   /* ---------- feedback ---------- */
-
-  const toast = useCallback((t: string) => {
-    clearTimeout(toastT.current);
-    setToastText(t);
-    toastT.current = setTimeout(() => setToastText(null), 1900);
-  }, []);
 
   const handleVoiceError = useCallback(
     (error: string) => {
@@ -534,6 +556,7 @@ export default function LoopApp() {
   // One plan row, shared by the "one big thing" card and the smaller "also
   // today" list. `big` gives the primary task a larger, ringed treatment.
   const renderPlanRow = (task: Task, big: boolean) => {
+    const displayTask = localizedTask(task, p.locale);
     const done = task.status === "done";
     const [dot] = TYPE_COLORS[task.type];
     const isPrimary = !!task.primary;
@@ -560,10 +583,10 @@ export default function LoopApp() {
               textDecoration: done ? "line-through" : "none",
             }}
           >
-            {task.title}
+            {displayTask.title}
           </div>
           <div className={`${localizedMonoClass(p.locale, "tracking-[0.1em]")} mt-[3px] text-[9.5px] text-[var(--ink3)]`}>
-            {taskTypeLabel(p.locale, task.type)} · {task.min} min
+            {taskTypeLabel(p.locale, task.type)} · {formatMinutes(p.locale, task.min)}
           </div>
         </div>
         <button
@@ -609,7 +632,7 @@ export default function LoopApp() {
       min: 15,
       type: quickType,
       energy: "Low",
-      steps: ["Just do the thing"],
+      steps: [dictionaries[p.locale].defaultTaskStep],
       status: toToday ? "today" : "candidate",
     };
     setP((s) => ({ ...s, candidates: [...s.candidates, task] }));
@@ -627,6 +650,7 @@ export default function LoopApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          locale: p.locale,
           reviewText: p.msgs.filter((m) => m.role === "user").map((m) => m.text).join("\n"),
           currentTasks: p.candidates
             .filter((c) => c.status === "candidate" || c.status === "today")
@@ -698,13 +722,19 @@ export default function LoopApp() {
       const res = await fetch("/api/review-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ messages: history, locale: p.locale }),
       });
       const data = (await res.json()) as { reply?: string };
       const reply = (data.reply ?? "").trim();
       setP((s) => ({
         ...s,
-        msgs: [...s.msgs, { role: "assistant", text: reply || "Thanks for sharing that." }],
+        msgs: [
+          ...s.msgs,
+          {
+            role: "assistant",
+            text: reply || (p.locale === "zh-CN" ? "谢谢你分享这些。" : "Thanks for sharing that."),
+          },
+        ],
       }));
     } catch {
       setP((s) => ({
@@ -740,7 +770,9 @@ export default function LoopApp() {
   const renameBasic = (id: string, label: string) => {
     setP((s) => ({
       ...s,
-      basics: s.basics.map((b) => (b.id === id ? { ...b, label: label.slice(0, 40) } : b)),
+      basics: s.basics.map((b) =>
+        b.id === id ? { ...b, label: label.slice(0, 40), presetKey: undefined } : b,
+      ),
     }));
   };
 
@@ -838,7 +870,7 @@ export default function LoopApp() {
   const h = now.getHours();
   const greeting = h < 12 ? t.greetingMorning : h < 18 ? t.greetingAfternoon : t.greetingEvening;
 
-  const curSteps = cur?.steps ?? [];
+  const curSteps = cur ? localizedTask(cur, p.locale).steps : [];
 
   let statusLabel = t.notStarted;
   let statusColor = "#959AA4";
@@ -865,6 +897,8 @@ export default function LoopApp() {
 
   const basicsDoneCount = p.basics.filter((b) => p.basicsDone[b.id]).length;
   const top = deck[0];
+  const topDisplay = top ? localizedTask(top, p.locale) : null;
+  const curDisplay = cur ? localizedTask(cur, p.locale) : null;
   const exiting = swipeExit !== 0;
   const deckDone = deck.length === 0 && p.swiped > 0;
 
@@ -989,7 +1023,7 @@ export default function LoopApp() {
                   {p.basics.map((b) => (
                     <div key={b.id} className="flex items-center gap-2">
                       <input
-                        value={b.label}
+                        value={localizedBasic(b, p.locale)}
                         onChange={(e) => renameBasic(b.id, e.target.value)}
                         placeholder={t.basicName}
                         className="min-w-0 flex-1 rounded-[14px] border border-[rgba(30,33,42,0.1)] bg-white px-3.5 py-2.5 text-[13.5px] text-[var(--ink)] outline-none placeholder:text-[#ABAC9F]"
@@ -997,7 +1031,7 @@ export default function LoopApp() {
                       <button
                         onClick={() => removeBasic(b.id)}
                         title={t.deleteBasic}
-                        aria-label={`Delete ${b.label}`}
+                        aria-label={`Delete ${localizedBasic(b, p.locale)}`}
                         className="flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-full border border-[rgba(30,33,42,0.12)] bg-white text-[15px] leading-none text-[var(--ink2)]"
                       >
                         ×
@@ -1058,7 +1092,7 @@ export default function LoopApp() {
                         >
                           {on ? "✓" : ""}
                         </span>
-                        {b.label}
+                        {localizedBasic(b, p.locale)}
                       </button>
                     );
                   })}
@@ -1129,14 +1163,14 @@ export default function LoopApp() {
                     <div className="flex items-center justify-between">
                       <TypeBadge type={top.type} label={taskTypeLabel(p.locale, top.type)} locale={p.locale} />
                       <span className="font-mono text-[10.5px] text-[var(--ink3)]">
-                        {top.min} min
+                        {formatMinutes(p.locale, top.min)}
                       </span>
                     </div>
                     <div className="mt-[18px] text-[26px] font-semibold leading-[1.18] tracking-[-0.02em] [text-wrap:pretty]">
-                      {top.title}
+                      {topDisplay?.title}
                     </div>
                     <div className="mt-[9px] text-[14.5px] font-light leading-[1.45] text-[var(--ink2)]">
-                      {top.reason}
+                      {topDisplay?.reason}
                     </div>
                     <div className="mt-[26px] flex gap-2.5">
                       <button
@@ -1323,7 +1357,7 @@ export default function LoopApp() {
                   <div className="flex items-center justify-between">
                     <TypeBadge type={cur.type} label={taskTypeLabel(p.locale, cur.type)} locale={p.locale} />
                     <span className="font-mono text-[10.5px] text-[var(--ink3)]">
-                      {cur.min} min
+                      {formatMinutes(p.locale, cur.min)}
                     </span>
                   </div>
                   {cur.primary && (
@@ -1333,7 +1367,7 @@ export default function LoopApp() {
                     </div>
                   )}
                   <div className="mt-4 text-[27px] font-semibold leading-[1.16] tracking-[-0.02em] [text-wrap:pretty]">
-                    {cur.title}
+                      {curDisplay?.title}
                   </div>
 
                   <div className="mt-[22px] border-t border-[rgba(30,33,42,0.06)] pt-4">
@@ -1451,7 +1485,7 @@ export default function LoopApp() {
                                 fontWeight: on ? 600 : 400,
                               }}
                             >
-                              {c === "Custom" ? t.custom : `${c} min`}
+                              {c === "Custom" ? t.custom : formatMinutes(p.locale, c)}
                             </button>
                           );
                         })}
@@ -1465,7 +1499,7 @@ export default function LoopApp() {
                             −
                           </button>
                           <span className="min-w-16 text-center font-mono text-sm text-[var(--ink)]">
-                            {timer.custom} min
+                            {formatMinutes(p.locale, timer.custom)}
                           </span>
                           <button
                             onClick={() => setTimer((t) => ({ ...t, custom: Math.min(120, t.custom + 5) }))}
@@ -1482,7 +1516,7 @@ export default function LoopApp() {
                         className="mt-3.5 h-12 w-full cursor-pointer rounded-2xl border-none text-sm font-semibold text-white shadow-[0_14px_26px_-12px_var(--accent)]"
                         style={{ background: "var(--accent-bg)" }}
                       >
-                        {t.startFocus} · {startLen} min
+                        {t.startFocus} · {formatMinutes(p.locale, startLen)}
                       </button>
                     </>
                   )}
@@ -1618,7 +1652,7 @@ export default function LoopApp() {
                       />
                       <span className="flex-1 text-[13.5px] font-medium">{g.title}</span>
                       <span className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--ink3)]">
-                        {g.minutes} min
+                        {formatMinutes(p.locale, g.minutes)}
                       </span>
                       <button
                         onClick={() => dropPlanItem(g.id)}

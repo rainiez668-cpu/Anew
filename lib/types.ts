@@ -28,6 +28,8 @@ export type EnergyLevel = "low" | "medium" | "high";
 /** A single unit of work in the daily loop. */
 export interface Task {
   id: string;
+  /** Stable key for built-in examples; absent on user/AI-created tasks. */
+  presetKey?: string;
   title: string;
   type: TaskType;
   status: TaskStatus;

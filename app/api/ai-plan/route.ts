@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
 type Provider = "mock" | "openai" | "anthropic";
 
 interface PlanRequest {
+  locale?: "en" | "zh-CN";
   reviewText?: string;
   currentTasks?: string[];
   completedTasks?: string[];
@@ -99,12 +100,14 @@ export function sanitizePlanRequest(input: unknown): PlanRequest {
         .slice(0, 30)
     : [];
 
-  return {
-    reviewText: cleanString(value.reviewText, 6_000),
-    currentTasks: cleanStringArray(value.currentTasks, 50),
-    completedTasks: cleanStringArray(value.completedTasks, 50),
-    dailyBasics: basics,
-  };
+  const reviewText = cleanString(value.reviewText, 6_000);
+  const currentTasks = cleanStringArray(value.currentTasks, 50);
+  const completedTasks = cleanStringArray(value.completedTasks, 50);
+  const locale = value.locale === "zh-CN" ||
+    (value.locale !== "en" && /[\u3400-\u9fff]/.test([reviewText, ...currentTasks, ...completedTasks].join(" ")))
+    ? "zh-CN"
+    : "en";
+  return { reviewText, currentTasks, completedTasks, dailyBasics: basics, locale };
 }
 
 // --- Provider selection ---------------------------------------------------
@@ -148,7 +151,7 @@ async function callOpenAI(key: string | undefined, ctx: PlanRequest): Promise<un
       temperature: 0.7,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: localizedPrompt(ctx.locale) },
         { role: "user", content: buildUserContent(ctx) },
       ],
     }),
@@ -201,7 +204,7 @@ async function callAnthropic(key: string | undefined, ctx: PlanRequest): Promise
     body: JSON.stringify({
       model,
       max_tokens: 2048,
-      system: SYSTEM_PROMPT,
+      system: localizedPrompt(ctx.locale),
       messages: [{ role: "user", content: buildUserContent(ctx) }],
       output_config: { format: { type: "json_schema", schema: PLAN_SCHEMA } },
     }),
@@ -219,7 +222,23 @@ async function callAnthropic(key: string | undefined, ctx: PlanRequest): Promise
 
 // --- Mock fallback: also RAW items, so it flows through the same cleaner ---
 
-function mockRaw(_ctx: PlanRequest): unknown[] {
+function localizedPrompt(locale: PlanRequest["locale"]): string {
+  return locale === "zh-CN"
+    ? `${SYSTEM_PROMPT} Return all task titles and reasons in Simplified Chinese.`
+    : SYSTEM_PROMPT;
+}
+
+function mockRaw(ctx: PlanRequest): unknown[] {
+  if (ctx.locale === "zh-CN") {
+    return [
+      { title: "完成今天最重要的一件事", reason: "先从一个清晰的小重点开始", type: "focus", minutes: 30, energy: "medium" },
+      { title: "处理一个拖延的小杂事", reason: "关掉一个挂念中的小循环", type: "errand", minutes: 15, energy: "low" },
+      { title: "回复两条消息", reason: "清理一点待办", type: "admin", minutes: 15, energy: "low" },
+      { title: "写下今晚的简短复盘", reason: "为明天的计划留下线索", type: "quick", minutes: 5, energy: "low" },
+      { title: "活动十分钟", reason: "让身体和注意力重新启动", type: "health", minutes: 10, energy: "low" },
+      { title: "整理一个小区域", reason: "空间轻一点，头脑也轻一点", type: "life", minutes: 10, energy: "low" },
+    ];
+  }
   return [
     { title: "The one thing that matters today", reason: "Start with a single clear focus", type: "focus", minutes: 30, energy: "medium" },
     { title: "Do one small errand you keep putting off", reason: "Clear a nagging open loop", type: "errand", minutes: 15, energy: "low" },
