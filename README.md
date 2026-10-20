@@ -126,7 +126,7 @@ Anew includes two server-side AI flows:
 
 The application supports `mock`, OpenAI, and Anthropic providers.
 
-`mock` works without an API key. OpenAI and Anthropic integrations require your own provider credentials.
+`mock` works without an API key. OpenAI and Anthropic integrations require your own provider credentials and are available for local development only in this build. Production requests to real providers are intentionally rejected until shared rate limiting is implemented; provider usage limits and budget alerts are still required before any future public enablement.
 
 Provider keys are read only by server-side API routes and should never be exposed to the browser.
 

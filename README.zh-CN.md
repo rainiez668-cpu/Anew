@@ -126,7 +126,7 @@ Anew 当前包含两个服务端 AI 流程：
 
 项目支持 `mock`、OpenAI 和 Anthropic 三种 provider。
 
-`mock` 模式不需要 API Key；使用 OpenAI 或 Anthropic 时，需要配置自己的 provider 凭证。
+`mock` 模式不需要 API Key。OpenAI 和 Anthropic 需要配置自己的 provider 凭证；当前构建仅允许在本地开发时调用真实 provider，生产环境会在共享限流实现前主动拒绝真实 AI 请求。未来公开启用前仍需在 provider 侧配置用量限制和预算提醒。
 
 API Key 只由服务端 API Routes 读取，不应暴露到浏览器。
 

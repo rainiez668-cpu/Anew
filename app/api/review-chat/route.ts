@@ -1,4 +1,4 @@
-import { guardJsonRequest } from "@/lib/api-guard";
+import { guardJsonRequest, realAiProductionGuard } from "@/lib/api-guard";
 
 // POST /api/review-chat
 //
@@ -46,6 +46,8 @@ export async function POST(request: Request) {
     guarded.body && typeof guarded.body === "object"
       ? (guarded.body as ChatRequest)
       : {};
+  const invalidPayload = validateChatPayload(guarded.body);
+  if (invalidPayload) return invalidPayload;
 
   const messages = sanitizeMessages(body.messages);
   const locale = body.locale === "zh-CN" ||
@@ -53,6 +55,8 @@ export async function POST(request: Request) {
     ? "zh-CN"
     : "en";
   const provider = resolveProvider();
+  const realAiBlocked = realAiProductionGuard(provider);
+  if (realAiBlocked) return realAiBlocked;
 
   if (provider !== "mock") {
     try {
@@ -62,8 +66,12 @@ export async function POST(request: Request) {
           : await callOpenAI(process.env.OPENAI_API_KEY, messages, locale);
       const clean = reply.trim();
       if (clean) return Response.json({ source: "review-chat", reply: clean });
-    } catch {
-      // Fall through to the mock.
+    } catch (error) {
+      console.warn("Anew review provider request failed", {
+        provider,
+        reason: error instanceof Error ? error.message : "unknown error",
+      });
+      // Fall through to the mock without exposing provider details to clients.
     }
   }
 
@@ -95,6 +103,20 @@ function sanitizeMessages(input: unknown): ChatMessage[] {
     if (text) out.push({ role, text });
   }
   return out.slice(-20);
+}
+
+function validateChatPayload(input: unknown): Response | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return Response.json({ error: "Request body must be a JSON object." }, { status: 400 });
+  }
+  const value = input as Record<string, unknown>;
+  if (value.messages !== undefined && !Array.isArray(value.messages)) {
+    return Response.json({ error: "messages must be an array." }, { status: 400 });
+  }
+  if (value.locale !== undefined && value.locale !== "en" && value.locale !== "zh-CN") {
+    return Response.json({ error: "locale must be en or zh-CN." }, { status: 400 });
+  }
+  return null;
 }
 
 async function callOpenAI(key: string | undefined, messages: ChatMessage[], locale: "en" | "zh-CN"): Promise<string> {

@@ -1,4 +1,4 @@
-import { guardJsonRequest } from "@/lib/api-guard";
+import { guardJsonRequest, realAiProductionGuard } from "@/lib/api-guard";
 import type { EnergyLevel, Task, TaskType } from "@/lib/types";
 
 // POST /api/ai-plan
@@ -51,9 +51,13 @@ export async function POST(request: Request) {
     windowMs: 10 * 60_000,
   });
   if (!guarded.ok) return guarded.response;
+  const invalidPayload = validatePlanPayload(guarded.body);
+  if (invalidPayload) return invalidPayload;
   const body = sanitizePlanRequest(guarded.body);
 
   const provider = resolveProvider();
+  const realAiBlocked = realAiProductionGuard(provider);
+  if (realAiBlocked) return realAiBlocked;
   if (provider !== "mock") {
     try {
       const raw =
@@ -64,8 +68,12 @@ export async function POST(request: Request) {
       if (tasks.length >= 5) {
         return Response.json({ source: "ai-plan", tasks });
       }
-    } catch {
-      // Fall through to the mock.
+    } catch (error) {
+      console.warn("Anew AI plan provider request failed", {
+        provider,
+        reason: error instanceof Error ? error.message : "unknown error",
+      });
+      // Fall through to the mock without exposing provider details to clients.
     }
   }
   return Response.json({ source: "mock", tasks: cleanAll(mockRaw(body)) });
@@ -81,6 +89,25 @@ function cleanStringArray(value: unknown, maxItems: number): string[] {
     .map((item) => cleanString(item, 160))
     .filter(Boolean)
     .slice(0, maxItems);
+}
+
+function validatePlanPayload(input: unknown): Response | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return Response.json({ error: "Request body must be a JSON object." }, { status: 400 });
+  }
+  const value = input as Record<string, unknown>;
+  if (value.reviewText !== undefined && typeof value.reviewText !== "string") {
+    return Response.json({ error: "reviewText must be a string." }, { status: 400 });
+  }
+  for (const key of ["currentTasks", "completedTasks"] as const) {
+    if (value[key] !== undefined && !Array.isArray(value[key])) {
+      return Response.json({ error: `${key} must be an array.` }, { status: 400 });
+    }
+  }
+  if (value.dailyBasics !== undefined && !Array.isArray(value.dailyBasics)) {
+    return Response.json({ error: "dailyBasics must be an array." }, { status: 400 });
+  }
+  return null;
 }
 
 export function sanitizePlanRequest(input: unknown): PlanRequest {
