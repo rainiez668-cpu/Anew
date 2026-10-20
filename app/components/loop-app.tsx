@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import packageInfo from "@/package.json";
 import { useSpeechRecognition } from "../hooks/use-speech-recognition";
+import { HINT_DISTANCE, SwipeHintTouch, useFirstSwipeHint } from "./swipe-hint";
 import {
   dictionaries,
   formatMinutes,
@@ -237,11 +238,11 @@ export default function LoopApp() {
   const [entering, setEntering] = useState(false);
   // Tinder-style drag: dx is horizontal offset in px, active while a finger/
   // pointer is down. dragRef holds the pointer's start so move/up can measure.
-  const [drag, setDrag] = useState<{ dx: number; active: boolean }>({ dx: 0, active: false });
+  const [drag, setDrag] = useState<{ dx: number; active: boolean; rotation?: number }>({ dx: 0, active: false });
   // axis: which direction the gesture locked into once it moved enough — "none"
   // until decided, "x" for a horizontal swipe, "y" once we bail to let the page
   // scroll. y/x is also where we store the pointer start so move/up can measure.
-  const dragRef = useRef<{ x: number; y: number; id: number; axis: "none" | "x" | "y" } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; id: number; axis: "none" | "x" | "y"; baseX: number; baseRotation: number } | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -405,6 +406,7 @@ export default function LoopApp() {
   // and the first row in the plan.
   const byPrimary = (a: Task, b: Task) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0);
   const deck = p.candidates.filter((c) => c.status === "candidate");
+  const swipeHint = useFirstSwipeHint(loaded && tab === "today" && deck.length > 0 && !quickOpen && !settingsOpen);
   const sel = p.candidates
     .filter((c) => c.status === "today" || c.status === "done")
     .sort(byPrimary);
@@ -452,6 +454,7 @@ export default function LoopApp() {
 
   const swipe = (keep: boolean) => {
     if (swipeExit || !deck.length) return;
+    swipeHint.complete();
     const id = deck[0].id;
     setSwipeExit(keep ? 1 : -1);
     setTimeout(() => {
@@ -481,11 +484,21 @@ export default function LoopApp() {
   const onCardPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (swipeExit || !deck.length) return;
     // Let the in-card buttons handle their own taps — don't hijack as a drag.
-    if ((e.target as HTMLElement).closest("button")) return;
+    if ((e.target as HTMLElement).closest("button")) {
+      const hintPosition = swipeHint.cancel();
+      if (hintPosition.x !== 0 || hintPosition.rotation !== 0) {
+        setDrag({ dx: hintPosition.x, rotation: hintPosition.rotation, active: true });
+      }
+      return;
+    }
+    const hintPosition = swipeHint.cancel();
+    if (hintPosition.x !== 0 || hintPosition.rotation !== 0) {
+      setDrag({ dx: hintPosition.x, rotation: hintPosition.rotation, active: true });
+    }
     // Record the start but DON'T capture the pointer or move the card yet —
     // we wait for the move handler to confirm a horizontal intent. That keeps
     // vertical scrolls (which share the same pointerdown) with the browser.
-    dragRef.current = { x: e.clientX, y: e.clientY, id: e.pointerId, axis: "none" };
+    dragRef.current = { x: e.clientX, y: e.clientY, id: e.pointerId, axis: "none", baseX: hintPosition.x, baseRotation: hintPosition.rotation };
   };
   const onCardPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = dragRef.current;
@@ -499,17 +512,22 @@ export default function LoopApp() {
         // Vertical wins: this is a scroll. Release the gesture so the browser
         // scrolls and we never commit a swipe.
         dragRef.current = null;
+        setDrag({ dx: 0, active: false });
         return;
       }
       // Horizontal wins: lock in, capture the pointer, start the Tinder drag.
       d.axis = "x";
       e.currentTarget.setPointerCapture(e.pointerId);
     }
-    setDrag({ dx, active: true });
+    setDrag({ dx: d.baseX + dx, rotation: d.baseRotation + dx * 0.04, active: true });
   };
   const onCardPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = dragRef.current;
-    if (!d || d.id !== e.pointerId) return;
+    if (!d) {
+      setDrag({ dx: 0, active: false });
+      return;
+    }
+    if (d.id !== e.pointerId) return;
     const dx = e.clientX - d.x;
     const lockedHorizontal = d.axis === "x";
     dragRef.current = null;
@@ -1127,50 +1145,56 @@ export default function LoopApp() {
                     style={{
                       transform: exiting
                         ? `translateX(${swipeExit * 430}px) rotate(${swipeExit * 7}deg)`
-                        : `translateX(${drag.dx}px) rotate(${drag.dx * 0.04}deg)`,
+                        : swipeHint.running
+                        ? `translateX(${swipeHint.motion.x}px) rotate(${swipeHint.motion.rotation}deg)`
+                        : `translateX(${drag.dx}px) rotate(${drag.rotation ?? drag.dx * 0.04}deg)`,
                       opacity: exiting ? 0 : 1,
                       transition: exiting
                         ? "transform 0.3s ease, opacity 0.3s ease"
                         : entering
                         ? // snap to center with no transform slide; just fade in
                           "opacity 0.25s ease"
-                        : drag.active
+                        : drag.active || swipeHint.running
                         ? "none"
                         : "transform 0.25s cubic-bezier(0.22,1,0.36,1), opacity 0.25s ease",
                     }}
                   >
                     {/* drag feedback — fade in as the card is pulled past center */}
                     <div
-                      className={`pointer-events-none absolute right-5 top-5 rounded-[10px] border-2 px-2.5 py-1 ${localizedMonoClass(p.locale, "tracking-[0.12em]")} text-[12px] font-bold text-white`}
+                      className={`pointer-events-none absolute right-5 top-5 z-30 rounded-[10px] border-2 px-2.5 py-1 ${localizedMonoClass(p.locale, "tracking-[0.12em]")} text-[12px] font-bold text-white`}
                       style={{
                         background: "var(--accent-bg)",
                         borderColor: "rgba(255,255,255,0.7)",
-                        opacity: Math.max(0, Math.min(1, drag.dx / SWIPE_THRESHOLD)),
+                        opacity: Math.max(0, Math.min(1, swipeHint.running ? swipeHint.motion.x / HINT_DISTANCE : drag.dx / SWIPE_THRESHOLD)),
                         transform: "rotate(8deg)",
                       }}
                     >
                       {t.keep}
                     </div>
                     <div
-                      className={`pointer-events-none absolute left-5 top-5 rounded-[10px] border-2 border-[rgba(30,33,42,0.25)] bg-[rgba(30,33,42,0.55)] px-2.5 py-1 ${localizedMonoClass(p.locale, "tracking-[0.12em]")} text-[12px] font-bold text-white`}
+                      className={`pointer-events-none absolute left-5 top-5 z-30 rounded-[10px] border-2 border-[rgba(30,33,42,0.25)] bg-[rgba(30,33,42,0.55)] px-2.5 py-1 ${localizedMonoClass(p.locale, "tracking-[0.12em]")} text-[12px] font-bold text-white`}
                       style={{
-                        opacity: Math.max(0, Math.min(1, -drag.dx / SWIPE_THRESHOLD)),
+                        opacity: Math.max(0, Math.min(1, swipeHint.running ? -swipeHint.motion.x / HINT_DISTANCE : -drag.dx / SWIPE_THRESHOLD)),
                         transform: "rotate(-8deg)",
                       }}
                     >
                       {t.skip}
                     </div>
-                    <div className="flex items-center justify-between">
-                      <TypeBadge type={top.type} label={taskTypeLabel(p.locale, top.type)} locale={p.locale} />
-                      <span className="font-mono text-[10.5px] text-[var(--ink3)]">
-                        {formatMinutes(p.locale, top.min)}
-                      </span>
-                    </div>
-                    <div className="mt-[18px] text-[26px] font-semibold leading-[1.18] tracking-[-0.02em] [text-wrap:pretty]">
-                      {topDisplay?.title}
-                    </div>
-                    <div className="mt-[9px] text-[14.5px] font-light leading-[1.45] text-[var(--ink2)]">
-                      {topDisplay?.reason}
+                    {swipeHint.running && <SwipeHintTouch x={swipeHint.motion.x} />}
+                    <div className="relative">
+                      <div className="flex items-center justify-between">
+                        <TypeBadge type={top.type} label={taskTypeLabel(p.locale, top.type)} locale={p.locale} />
+                        <span className="font-mono text-[10.5px] text-[var(--ink3)]">
+                          {formatMinutes(p.locale, top.min)}
+                        </span>
+                      </div>
+                      <div className="mt-[18px] text-[26px] font-semibold leading-[1.18] tracking-[-0.02em] [text-wrap:pretty]">
+                        {topDisplay?.title}
+                      </div>
+                      <div className="mt-[9px] text-[14.5px] font-light leading-[1.45] text-[var(--ink2)]">
+                        {topDisplay?.reason}
+                      </div>
+                      {swipeHint.running && <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 bg-white/40" />}
                     </div>
                     <div className="mt-[26px] flex gap-2.5">
                       <button
